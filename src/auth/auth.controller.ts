@@ -36,26 +36,44 @@ export class AuthController {
     @Body() dto: LoggerDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { token, expiresIn } = await this.authService.login(dto);
+    const session = await this.authService.login(dto);
 
-    const cookieName =
+    const accessCookieName =
       this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
+    const refreshCookieName =
+      this.configService.get<string>('REFRESH_COOKIE_NAME') || 'refresh_token';
     const secureFlag =
       this.configService.get<string>('COOKIE_SECURE') === 'true';
-    const maxAge = parseInt(
+    const accessMaxAge = parseInt(
       this.configService.get<string>('COOKIE_MAX_AGE') ||
         String(1000 * 60 * 60),
       10,
     );
+    const refreshMaxAge = parseInt(
+      this.configService.get<string>('REFRESH_TOKEN_MAX_AGE') ||
+        String(7 * 24 * 60 * 60 * 1000),
+      10,
+    );
 
-    res.cookie(cookieName, token, {
+    res.cookie(accessCookieName, session.accessToken, {
       httpOnly: true,
       secure: secureFlag,
       sameSite: 'lax',
-      maxAge,
+      maxAge: accessMaxAge,
     });
 
-    return { success: true, expiresIn };
+    res.cookie(refreshCookieName, session.refreshToken, {
+      httpOnly: true,
+      secure: secureFlag,
+      sameSite: 'lax',
+      maxAge: refreshMaxAge,
+    });
+
+    return {
+      success: true,
+      expiresIn: session.expiresIn,
+      refreshExpiresIn: session.refreshExpiresIn,
+    };
   }
 
   @Public()
@@ -74,7 +92,7 @@ export class AuthController {
   @Public()
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
-  googleAuthRedirect(
+  async googleAuthRedirect(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -85,22 +103,36 @@ export class AuthController {
       throw new UnauthorizedException('Usuario de Google no autenticado');
     }
 
-    const token = this.authService.getJwtForUser(user);
-    const cookieName =
+    const session = await this.authService.createSessionTokens(user);
+    const accessCookieName =
       this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
+    const refreshCookieName =
+      this.configService.get<string>('REFRESH_COOKIE_NAME') || 'refresh_token';
     const secureFlag =
       this.configService.get<string>('COOKIE_SECURE') === 'true';
-    const maxAge = parseInt(
+    const accessMaxAge = parseInt(
       this.configService.get<string>('COOKIE_MAX_AGE') ||
         String(1000 * 60 * 60),
       10,
     );
+    const refreshMaxAge = parseInt(
+      this.configService.get<string>('REFRESH_TOKEN_MAX_AGE') ||
+        String(7 * 24 * 60 * 60 * 1000),
+      10,
+    );
 
-    res.cookie(cookieName, token, {
+    res.cookie(accessCookieName, session.accessToken, {
       httpOnly: true,
       secure: secureFlag,
       sameSite: 'lax',
-      maxAge,
+      maxAge: accessMaxAge,
+    });
+
+    res.cookie(refreshCookieName, session.refreshToken, {
+      httpOnly: true,
+      secure: secureFlag,
+      sameSite: 'lax',
+      maxAge: refreshMaxAge,
     });
 
     return {
@@ -114,14 +146,79 @@ export class AuthController {
     };
   }
 
-  @Post('logout')
-  logout(@Res({ passthrough: true }) res: Response) {
-    const cookieName =
+  @Public()
+  @Post('refresh')
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const refreshCookieName =
+      this.configService.get<string>('REFRESH_COOKIE_NAME') || 'refresh_token';
+    const rawRefreshToken = req.cookies?.[refreshCookieName];
+    if (!rawRefreshToken) {
+      throw new UnauthorizedException('Refresh token no encontrado');
+    }
+
+    const session = await this.authService.rotateRefreshToken(rawRefreshToken);
+    const accessCookieName =
       this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
     const secureFlag =
       this.configService.get<string>('COOKIE_SECURE') === 'true';
+    const accessMaxAge = parseInt(
+      this.configService.get<string>('COOKIE_MAX_AGE') ||
+        String(1000 * 60 * 60),
+      10,
+    );
+    const refreshMaxAge = parseInt(
+      this.configService.get<string>('REFRESH_TOKEN_MAX_AGE') ||
+        String(7 * 24 * 60 * 60 * 1000),
+      10,
+    );
 
-    res.clearCookie(cookieName, {
+    res.cookie(accessCookieName, session.accessToken, {
+      httpOnly: true,
+      secure: secureFlag,
+      sameSite: 'lax',
+      maxAge: accessMaxAge,
+    });
+
+    res.cookie(refreshCookieName, session.refreshToken, {
+      httpOnly: true,
+      secure: secureFlag,
+      sameSite: 'lax',
+      maxAge: refreshMaxAge,
+    });
+
+    return {
+      success: true,
+      expiresIn: session.expiresIn,
+      refreshExpiresIn: session.refreshExpiresIn,
+    };
+  }
+
+  @Post('logout')
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const accessCookieName =
+      this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
+    const refreshCookieName =
+      this.configService.get<string>('REFRESH_COOKIE_NAME') || 'refresh_token';
+    const secureFlag =
+      this.configService.get<string>('COOKIE_SECURE') === 'true';
+    const currentRefreshToken = req.cookies?.[refreshCookieName];
+
+    if (currentRefreshToken) {
+      await this.authService.revokeRefreshToken(currentRefreshToken);
+    }
+
+    res.clearCookie(accessCookieName, {
+      httpOnly: true,
+      secure: secureFlag,
+      sameSite: 'lax',
+    });
+    res.clearCookie(refreshCookieName, {
       httpOnly: true,
       secure: secureFlag,
       sameSite: 'lax',

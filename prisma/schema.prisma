@@ -42,6 +42,7 @@ model UserToken {
 enum TokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
+  REFRESH_TOKEN
 }
 
 enum AuthProvider {

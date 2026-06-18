@@ -7,13 +7,19 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { PrismaService } from 'src/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { LoggerDto } from './dto/logger.dto';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { MailService } from 'src/mail/mail.service';
 import { Resend } from 'resend';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import type { SignOptions } from 'jsonwebtoken';
 import { AuthProvider, TokenType } from 'generated/prisma/client';
-import { JWT_EXPIRES_IN, RESEND_API_KEY } from './auth.constants';
+import {
+  JWT_EXPIRES_IN,
+  JWT_REFRESH_EXPIRES_IN,
+  REFRESH_TOKEN_MAX_AGE,
+  RESEND_API_KEY,
+} from './auth.constants';
 
 interface GoogleProfile {
   displayName?: string;
@@ -112,10 +118,7 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    return {
-      token: this.getJwtForUser(user),
-      expiresIn: this.configService.get<string>(JWT_EXPIRES_IN, '1h'),
-    };
+    return this.createSessionTokens(user);
   }
 
   async findOrCreateGoogleUser(profile: GoogleProfile) {
@@ -160,11 +163,120 @@ export class AuthService {
     });
   }
 
-  getJwtForUser(user: { id: string; username?: string | null; email: string }) {
-    return this.jwtService.sign({
-      sub: user.id,
-      username: user.username,
-      email: user.email,
+  private hashToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private getJwtExpiresIn() {
+    return this.configService.get<string>(JWT_EXPIRES_IN, '1h');
+  }
+
+  private getRefreshTokenMaxAge() {
+    const raw =
+      this.configService.get<string>(REFRESH_TOKEN_MAX_AGE) ||
+      String(7 * 24 * 60 * 60 * 1000);
+    const parsed = parseInt(raw, 10);
+    return Number.isNaN(parsed) ? 7 * 24 * 60 * 60 * 1000 : parsed;
+  }
+
+  private getRefreshTokenExpiresIn() {
+    return this.configService.get<string>(JWT_REFRESH_EXPIRES_IN, '7d');
+  }
+
+  async createRefreshToken(userId: string) {
+    const refreshToken = randomBytes(64).toString('hex');
+    const hashedToken = this.hashToken(refreshToken);
+    await this.prisma.userToken.create({
+      data: {
+        token: hashedToken,
+        type: TokenType.REFRESH_TOKEN,
+        userId,
+        expiresAt: new Date(Date.now() + this.getRefreshTokenMaxAge()),
+      },
+    });
+    return refreshToken;
+  }
+
+  async createSessionTokens(user: {
+    id: string;
+    username?: string | null;
+    email: string;
+  }) {
+    const accessToken = this.getJwtForUser(user, this.getJwtExpiresIn());
+    const refreshToken = await this.createRefreshToken(user.id);
+
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: this.getJwtExpiresIn(),
+      refreshExpiresIn: this.getRefreshTokenExpiresIn(),
+    };
+  }
+
+  getJwtForUser(
+    user: { id: string; username?: string | null; email: string },
+    expiresIn: string = '1h',
+  ) {
+    return this.jwtService.sign(
+      {
+        sub: user.id,
+        username: user.username,
+        email: user.email,
+      },
+      { expiresIn: expiresIn as any },
+    );
+  }
+
+  async rotateRefreshToken(rawRefreshToken: string) {
+    const hashedToken = this.hashToken(rawRefreshToken);
+    const tokenRecord = await this.prisma.userToken.findFirst({
+      where: {
+        token: hashedToken,
+        type: TokenType.REFRESH_TOKEN,
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!tokenRecord?.user) {
+      throw new UnauthorizedException('Refresh token inválido o expirado');
+    }
+
+    await this.prisma.userToken.delete({
+      where: { id: tokenRecord.id },
+    });
+
+    const refreshToken = await this.createRefreshToken(tokenRecord.user.id);
+    const accessToken = this.getJwtForUser(
+      tokenRecord.user,
+      this.getJwtExpiresIn(),
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: this.getJwtExpiresIn(),
+      refreshExpiresIn: this.getRefreshTokenExpiresIn(),
+    };
+  }
+
+  async revokeRefreshToken(rawRefreshToken: string) {
+    const hashedToken = this.hashToken(rawRefreshToken);
+    await this.prisma.userToken.deleteMany({
+      where: {
+        token: hashedToken,
+        type: TokenType.REFRESH_TOKEN,
+      },
     });
   }
 
