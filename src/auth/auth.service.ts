@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { PrismaService } from 'src/prisma.service';
+import { Prisma } from 'generated/prisma/client';
 import * as bcrypt from 'bcrypt';
 import { LoggerDto } from './dto/logger.dto';
 import { createHash, randomBytes } from 'node:crypto';
@@ -12,7 +13,6 @@ import { MailService } from 'src/mail/mail.service';
 import { Resend } from 'resend';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import type { SignOptions } from 'jsonwebtoken';
 import { AuthProvider, TokenType } from 'generated/prisma/client';
 import {
   JWT_EXPIRES_IN,
@@ -102,10 +102,7 @@ export class AuthService {
     const normalizedEmail = identifier.toLowerCase();
     const user = await this.prisma.user.findFirst({
       where: {
-        OR: [
-          { username: identifier },
-          { email: normalizedEmail },
-        ],
+        OR: [{ username: identifier }, { email: normalizedEmail }],
       },
     });
 
@@ -134,33 +131,71 @@ export class AuthService {
     }
 
     const displayName =
-      typeof profile.displayName === 'string'
-        ? profile.displayName
-        : undefined;
+      typeof profile.displayName === 'string' ? profile.displayName : undefined;
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
     });
 
     if (existingUser) {
+      const updateData: any = {
+        emailVerified: true,
+        provider: AuthProvider.GOOGLE,
+      };
+
+      // Only attempt to set a username if the user doesn't have one already
+      // and the displayName is available and not already taken by another user.
+      if (!existingUser.username && displayName) {
+        const usernameTaken = await this.prisma.user.findFirst({
+          where: { username: displayName },
+        });
+        if (!usernameTaken) {
+          updateData.username = displayName;
+        }
+      }
+
       return this.prisma.user.update({
         where: { id: existingUser.id },
-        data: {
-          emailVerified: true,
-          provider: AuthProvider.GOOGLE,
-          username: existingUser.username || displayName,
-        },
+        data: updateData,
       });
     }
 
-    return this.prisma.user.create({
-      data: {
-        email,
-        username: displayName,
-        emailVerified: true,
-        provider: AuthProvider.GOOGLE,
-      },
-    });
+    // No existing user with this email: create one.
+    // If the displayName would violate the unique constraint, fall back to null username.
+    let usernameToUse: string | null = displayName ?? null;
+    if (usernameToUse) {
+      const usernameTaken = await this.prisma.user.findFirst({
+        where: { username: usernameToUse },
+      });
+      if (usernameTaken) usernameToUse = null;
+    }
+
+    try {
+      return await this.prisma.user.create({
+        data: {
+          email,
+          username: usernameToUse,
+          emailVerified: true,
+          provider: AuthProvider.GOOGLE,
+        },
+      });
+    } catch (err: any) {
+      // Handle rare race condition where username becomes taken between check and create
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        return this.prisma.user.create({
+          data: {
+            email,
+            username: null,
+            emailVerified: true,
+            provider: AuthProvider.GOOGLE,
+          },
+        });
+      }
+      throw err;
+    }
   }
 
   private hashToken(token: string) {

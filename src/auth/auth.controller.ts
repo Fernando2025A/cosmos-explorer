@@ -7,6 +7,7 @@ import {
   UseGuards,
   Req,
   UnauthorizedException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
@@ -99,51 +100,81 @@ export class AuthController {
     const user = req.user as
       | { id: string; username?: string | null; email: string }
       | undefined;
-    if (!user?.id || !user.email) {
-      throw new UnauthorizedException('Usuario de Google no autenticado');
-    }
 
-    const session = await this.authService.createSessionTokens(user);
+    // Pre-compute cookie names / flags so we can clear them if an error occurs
     const accessCookieName =
       this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
     const refreshCookieName =
       this.configService.get<string>('REFRESH_COOKIE_NAME') || 'refresh_token';
     const secureFlag =
       this.configService.get<string>('COOKIE_SECURE') === 'true';
-    const accessMaxAge = parseInt(
-      this.configService.get<string>('COOKIE_MAX_AGE') ||
-        String(1000 * 60 * 60),
-      10,
-    );
-    const refreshMaxAge = parseInt(
-      this.configService.get<string>('REFRESH_TOKEN_MAX_AGE') ||
-        String(7 * 24 * 60 * 60 * 1000),
-      10,
-    );
 
-    res.cookie(accessCookieName, session.accessToken, {
-      httpOnly: true,
-      secure: secureFlag,
-      sameSite: 'lax',
-      maxAge: accessMaxAge,
-    });
+    try {
+      if (!user?.id || !user.email) {
+        throw new UnauthorizedException('Usuario de Google no autenticado');
+      }
 
-    res.cookie(refreshCookieName, session.refreshToken, {
-      httpOnly: true,
-      secure: secureFlag,
-      sameSite: 'lax',
-      maxAge: refreshMaxAge,
-    });
+      const session = await this.authService.createSessionTokens(user);
 
-    return {
-      success: true,
-      message: 'Google login exitoso',
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-      },
-    };
+      const accessMaxAge = parseInt(
+        this.configService.get<string>('COOKIE_MAX_AGE') ||
+          String(1000 * 60 * 60),
+        10,
+      );
+      const refreshMaxAge = parseInt(
+        this.configService.get<string>('REFRESH_TOKEN_MAX_AGE') ||
+          String(7 * 24 * 60 * 60 * 1000),
+        10,
+      );
+
+      res.cookie(accessCookieName, session.accessToken, {
+        httpOnly: true,
+        secure: secureFlag,
+        sameSite: 'lax',
+        maxAge: accessMaxAge,
+      });
+
+      res.cookie(refreshCookieName, session.refreshToken, {
+        httpOnly: true,
+        secure: secureFlag,
+        sameSite: 'lax',
+        maxAge: refreshMaxAge,
+      });
+
+      const redirectUrl =
+        this.configService.get<string>('GOOGLE_REDIRECT_URL') ||
+        'http://localhost:5173/home';
+
+      res.redirect(redirectUrl);
+    } catch (err) {
+      // Log full error for debugging and clear any cookies that may exist
+      // so the client isn't left with stale tokens.
+      // eslint-disable-next-line no-console
+      console.error('Error handling Google callback:', err);
+
+      try {
+        res.clearCookie(accessCookieName, {
+          httpOnly: true,
+          secure: secureFlag,
+          sameSite: 'lax',
+        });
+        res.clearCookie(refreshCookieName, {
+          httpOnly: true,
+          secure: secureFlag,
+          sameSite: 'lax',
+        });
+      } catch (clearErr) {
+        // eslint-disable-next-line no-console
+        console.error(
+          'Error clearing cookies after Google callback failure:',
+          clearErr,
+        );
+      }
+
+      throw new InternalServerErrorException(
+        'Error procesando callback de Google',
+      );
+    }
   }
 
   @Public()
@@ -196,11 +227,9 @@ export class AuthController {
     };
   }
 
-  @Post('logout')
-  async logout(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  @Public()
+  @Get('logout')
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const accessCookieName =
       this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
     const refreshCookieName =
