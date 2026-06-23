@@ -15,3 +15,14 @@ export const urls = {
   neptune:
     'https://imgs.search.brave.com/A0bWapFW_LM1k0fCMZFyYdMS5nUldzlLtdDvTuS1rBs/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly9tZWRp/YS5pc3RvY2twaG90/by5jb20vaWQvMTM2/NTEyNTc4NC9lcy9m/b3RvL25lcHR1bmUt/cGxhbmV0LmpwZz9z/PTYxMng2MTImdz0w/Jms9MjAmYz1VaVVK/NE44Z2J0amM5OHB4/YWVLbHZ5VC0yT0N1/RFVMdzdDLTlYclhY/REtFPQ',
 };
+
+export const EXOPLANET_IMAGES = {
+  rocky: 'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?w=800',
+  superEarth:
+    'https://imgs.search.brave.com/V6LGIbky8SukKDh65uRibqHMiZh_vu3q4TVxvJJ4Lhc/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly90My5m/dGNkbi5uZXQvanBn/LzA4LzgwLzI2LzYy/LzM2MF9GXzg4MDI2/NjIyNF83amRmVEZJ/Z1N1V1MwWjdGUmZh/WXY4a3lIbXdmWEZ5/SC5qcGc',
+  neptunian:
+    'https://imgs.search.brave.com/GdCyHGghZohSpwLvu2pEp1ZborWmzSqJOnZBtNBvm-A/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly9zdGF0/aWMudmVjdGVlenku/Y29tL3N5c3RlbS9y/ZXNvdXJjZXMvdGh1/bWJuYWlscy8wMzgv/MDIzLzQ0NS9zbWFs/bC9haS1nZW5lcmF0/ZWQtbmVwdHVuZS1w/bGFuZXQtaW4tc3Bh/Y2UtY2VsZXN0aWFs/LWNvc21pYy1zb2xh/ci1zeXN0ZW0tYXN0/cm9ub215LXVuaXZl/cnNlLWdhbGFjdGlj/LXBsYW5ldGFyeS1w/aG90by5qcGc',
+  gasGiant:
+    'https://imgs.search.brave.com/oEY0TyMvQXBs0pKonEm7rosR4jM6mfaE158llzekjss/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly9jZG4w/LmVjb2xvZ2lhdmVy/ZGUuY29tL2VzL3Bv/c3RzLzEvOC8yL25l/cHR1bm9fNzI4MV80/XzYwMC5qcGc',
+  default: 'https://images.unsplash.com/photo-1464802686167-b939a6910659?w=800',
+};
