@@ -17,6 +17,7 @@ import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
+import type { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Controller('auth')
 export class AuthController {
@@ -257,7 +258,7 @@ export class AuthController {
   }
 
   @Get('me')
-  getProfile(@CurrentUser() user: unknown) {
+  getProfile(@CurrentUser() user: JwtPayload) {
     let userId: string | undefined;
     if (user && typeof user === 'object') {
       const u = user as Record<string, any>;
