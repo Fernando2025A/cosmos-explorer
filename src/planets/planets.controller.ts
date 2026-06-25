@@ -18,4 +18,9 @@ export class PlanetsController {
     return this.planetsService.getExoplanetData(name);
   }
 
+  @Public()
+  @Get('test')
+  throw() {
+    return this.planetsService.test();
+  }
 }

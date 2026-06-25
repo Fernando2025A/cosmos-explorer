@@ -1,5 +1,10 @@
 import axios from 'axios';
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  HttpException,
+  HttpStatus,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisService } from 'src/redis/redis.service';
 import { EXOPLANET_IMAGES, urls } from './planets.images';
@@ -72,9 +77,11 @@ export class PlanetsService {
         return JSON.parse(cachedPlanet);
       }
 
-      // 3. CAMBIO CLAVE: Consultamos la tabla 'pscompx' en lugar de 'ps'
-      // Esta tabla garantiza un solo resultado con los datos más completos posibles
-      const query = `select * from pscompx where lower(pl_name)='${cleanedName}'`;
+      // Convertimos el nombre al formato de mayúsculas estricto de la NASA
+      const nasaCasedName = this.formatToNASACasing(cleanedName);
+
+      // 3. CORRECCIÓN: El nombre correcto de la tabla compuesto es 'pscomppars'
+      const query = `select * from pscomppars where pl_name='${nasaCasedName}'`;
       const url = `https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=${encodeURIComponent(query)}&format=json`;
 
       const response = await axios.get(url);
@@ -84,7 +91,7 @@ export class PlanetsService {
         return null;
       }
 
-      // Al usar pscompx, la primera fila siempre es la mejor y la única oficial
+      // Al usar pscomppars, la primera fila siempre es la mejor y la única oficial
       const rawPlanetData = response.data[0];
 
       // 5. Estructurar la respuesta
@@ -109,13 +116,66 @@ export class PlanetsService {
     }
   }
 
+  /**
+   * Convierte un nombre en minúsculas al formato de nomenclatura oficial de la NASA
+   * Ejemplos:
+   * - "proxima cen b" -> "Proxima Cen b"
+   * - "kepler-16 b"   -> "Kepler-16 b"
+   * - "gj 436 b"      -> "GJ 436 b"
+   */
+  private formatToNASACasing(name: string): string {
+    // Limpiamos espacios dobles por si acaso
+    const words = name.replace(/\s+/g, ' ').split(' ');
+
+    const casedWords = words.map((word, index) => {
+      const lowerWord = word.toLowerCase();
+
+      // 1. La letra del planeta al final ("b", "c", "d") siempre va en minúscula
+      if (
+        index === words.length - 1 &&
+        lowerWord.length === 1 &&
+        /[a-z]/.test(lowerWord)
+      ) {
+        return lowerWord;
+      }
+
+      // 2. Prefijos de catálogos que van completamente en MAYÚSCULAS
+      const allCapsCatalogs = [
+        'gj',
+        'hd',
+        'toi',
+        'tic',
+        'wasp',
+        'lhs',
+        'hat',
+        'ngts',
+        'tres',
+        'ogle',
+        'hip',
+        'hr',
+      ];
+      if (
+        allCapsCatalogs.includes(lowerWord) ||
+        allCapsCatalogs.some((cat) => lowerWord.startsWith(cat + '-'))
+      ) {
+        return word.toUpperCase();
+      }
+
+      // Caso especial de catálogo mixto
+      if (lowerWord === 'corot') return 'CoRoT';
+
+      // 3. Formato estándar de título (Primera letra Mayúscula: Kepler, Proxima, Cen, Cnc)
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    });
+
+    return casedWords.join(' ');
+  }
+
   private getGenericExoplanetImage(
     radiusEarths: number | undefined | null,
   ): string {
-    // Si la NASA no tiene el dato, usamos la por defecto de tu archivo
     if (!radiusEarths) return EXOPLANET_IMAGES.default;
 
-    // Clasificación basada en el radio utilizando tu constante externa
     if (radiusEarths < 1.25) {
       return EXOPLANET_IMAGES.rocky;
     } else if (radiusEarths < 2.0) {
@@ -125,5 +185,8 @@ export class PlanetsService {
     } else {
       return EXOPLANET_IMAGES.gasGiant;
     }
+  }
+  test() {
+    throw new BadRequestException('Pueba');
   }
 }

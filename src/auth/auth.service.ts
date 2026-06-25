@@ -2,6 +2,8 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -10,7 +12,6 @@ import * as bcrypt from 'bcrypt';
 import { LoggerDto } from './dto/logger.dto';
 import { createHash, randomBytes } from 'node:crypto';
 import { MailService } from 'src/mail/mail.service';
-import { Resend } from 'resend';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthProvider, TokenType } from 'generated/prisma/client';
@@ -18,8 +19,9 @@ import {
   JWT_EXPIRES_IN,
   JWT_REFRESH_EXPIRES_IN,
   REFRESH_TOKEN_MAX_AGE,
-  RESEND_API_KEY,
 } from './auth.constants';
+import { RedisService } from 'src/redis/redis.service';
+import { VerifyCodeDto } from './dto/verify-code.dto';
 
 interface GoogleProfile {
   displayName?: string;
@@ -33,6 +35,7 @@ export class AuthService {
     private readonly mailService: MailService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly redis: RedisService,
   ) {}
 
   async create(dto: CreateUserDto) {
@@ -78,21 +81,44 @@ export class AuthService {
     };
   }
 
-  async testEmail() {
-    const resendKey = this.configService.get<string>(RESEND_API_KEY);
-    if (!resendKey) {
-      throw new Error(`${RESEND_API_KEY} is not configured`);
-    }
-
-    const resend = new Resend(resendKey);
-    return resend.emails.send({
-      from: 'onboarding@resend.dev',
-      to: 'mccofin23@gmail.com',
-      subject: 'Verificar email',
-      html: '<h1>Hola</h1>',
-    });
+  async welcomeEmail(userEmail: string) {
+    return await this.mailService.sendEmail(userEmail);
   }
 
+  async sendVerificationCode(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user)
+      throw new NotFoundException('No se encontró el usuario solicitado');
+    if (user.emailVerified)
+      throw new BadRequestException('El usuario ya está verificado');
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    await this.redis.set(`email-verification:${user.id}`, code, 600);
+
+    await this.mailService.sendCode(user.email, code);
+    return {
+      exito: true,
+      message: `Verification code has been sending to ${user.email}`,
+    };
+  }
+
+  async verifyCode(dto: VerifyCodeDto, userId: string) {
+    const code = await this.redis.get(`email-verification:${userId}`);
+    if (!code) throw new BadRequestException('Código expirado o no generado');
+    if (code !== dto.code)
+      throw new BadRequestException('El código ingresado es incorrecto.');
+    await this.redis.del(`email-verification:${userId}`);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        emailVerified: true,
+      },
+    });
+    return {
+      message: 'Email verificado correctamente',
+    };
+  }
   async login(dto: LoggerDto) {
     const identifier = dto.identifier?.trim();
     if (!identifier) {

@@ -18,6 +18,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
+import { VerifyCodeDto } from './dto/verify-code.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -78,10 +79,33 @@ export class AuthController {
     };
   }
 
-  @Public()
   @Get('email')
-  getEmail() {
-    return this.authService.testEmail();
+  welcomeEmail(@CurrentUser() user: JwtPayload) {
+    return this.authService.welcomeEmail(user.email);
+  }
+
+  @Get('code')
+  getCode(@CurrentUser() user: JwtPayload) {
+    let userId: string | undefined;
+    if (user && typeof user === 'object') {
+      const u = user as Record<string, any>;
+      if (u.id && typeof u.id === 'string') userId = u.id;
+      else if (u.sub && typeof u.sub === 'string') userId = u.sub;
+    }
+    if (!userId) throw new UnauthorizedException('Usuario no autenticado');
+    return this.authService.sendVerificationCode(userId);
+  }
+
+  @Post('code')
+  verifyCode(@Body() dto: VerifyCodeDto, @CurrentUser() user: JwtPayload) {
+    let userId: string | undefined;
+    if (user && typeof user === 'object') {
+      const u = user as Record<string, any>;
+      if (u.id && typeof u.id === 'string') userId = u.id;
+      else if (u.sub && typeof u.sub === 'string') userId = u.sub;
+    }
+    if (!userId) throw new UnauthorizedException('Usuario no autenticado');
+    return this.authService.verifyCode(dto, userId);
   }
 
   @Public()
@@ -229,7 +253,7 @@ export class AuthController {
   }
 
   @Public()
-  @Get('logout')
+  @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const accessCookieName =
       this.configService.get<string>('AUTH_COOKIE_NAME') || 'auth_token';
